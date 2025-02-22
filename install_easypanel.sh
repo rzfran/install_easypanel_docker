@@ -1,11 +1,17 @@
 #!/bin/bash
 ################################################################################
-#  Script para instalar y configurar Docker + Easypanel en un servidor Ubuntu  #
-#  con la mejor solución para HTTPS, usando Let’s Encrypt si tienes dominio.    #
+#  Script de instalación de Easypanel para Contabo                             #
+#  (c) 2025 - Francisco Rozas Mira - MIT License                               #
 #                                                                              #
-#  Autor: Francisco Rozas Mira (2025)  |  Instagram: @franr.ia                 #
-#  Basado en la idea original de OrionDesign                                   #
-#  Licencia: MIT                                                               #
+#  Orden de pasos (exáctamente como se indica):                                #
+#    1) apt update && apt upgrade -y                                           #
+#    2) Instala Docker                                                         #
+#    3) Instala Easypanel (docker run)                                         #
+#    4) apt install net-tools                                                  #
+#    5) netstat -tuln | grep -E "80|443"                                       #
+#    6) Detener apache2                                                        #
+#    7) Configurar ufw (ssh, 80, 443)                                          #
+#    8) Mensaje final de acceso                                               #
 ################################################################################
 
 : '
@@ -34,25 +40,26 @@ DE ACCIONES EN EL SOFTWARE.
 '
 
 # ──────────────────────────────────────────────────────────────────────────────
-#                            COLORES Y FUNCIONES
+#                             COLORES Y FUNCIONES
 # ──────────────────────────────────────────────────────────────────────────────
 AMARILLO="\e[33m"
 VERDE="\e[32m"
-BLANCO="\e[97m"
+CYAN="\e[36m"
 ROJO="\e[91m"
+BLANCO="\e[97m"
 RESET="\e[0m"
 
-function echo_info ()  { echo -e "${BLANCO}[INFO]${RESET} $1"; }
-function echo_ok ()    { echo -e "${VERDE}[OK]${RESET} $1"; }
-function echo_warn ()  { echo -e "${AMARILLO}[WARN]${RESET} $1"; }
-function echo_error () { echo -e "${ROJO}[ERROR]${RESET} $1"; }
+function echo_info()  { echo -e "${CYAN}[INFO]${RESET} $1"; }
+function echo_ok()    { echo -e "${VERDE}[OK]${RESET} $1"; }
+function echo_warn()  { echo -e "${AMARILLO}[WARN]${RESET} $1"; }
+function echo_error() { echo -e "${ROJO}[ERROR]${RESET} $1"; }
 
 # ──────────────────────────────────────────────────────────────────────────────
-#                              VALIDACIÓN DE ROOT
+#                            VALIDACIÓN DE ROOT
 # ──────────────────────────────────────────────────────────────────────────────
 if [ "$(id -u)" != "0" ]; then
-   echo_error "Debes ejecutar este script como root (o usando sudo)."
-   exit 1
+  echo_error "Debes ejecutar este script como root (o usando sudo)."
+  exit 1
 fi
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -60,169 +67,179 @@ fi
 # ──────────────────────────────────────────────────────────────────────────────
 clear
 cat << "EOF"
- _______                      _____                 _ 
-|__   __|                    |  __ \               | |
-   | | __ _ _ __ ___  ___ ___| |__) |__ _ _ __ ___ | |
-   | |/ _` | '__/ _ \/ __/ _ \  _  // _` | '_ ` _ \| |
-   | | (_| | | |  __/ (_|  __/ | \ \ (_| | | | | | |_|
-   |_|\__,_|_|  \___|\___\___|_|  \_\__,_|_| |_| |_(_)
-
- Instalador Automatizado de Docker + Easypanel (HTTPS Let’s Encrypt)
- (c) 2025 - Francisco Rozas Mira   |  Instagram: @franr.ia
- Basado en la idea original de OrionDesign
- Licencia: MIT
+  _______             _              _              ___ _           _            
+ |__   __|           (_)            | |            / __| |         | |           
+    | | __ _ _ __ ___ _ _ __ ___  __| | ___ _ __  | |  | |_   _  __| | ___ _ __  
+    | |/ _` | '__/ _ \ | '__/ _ \/ _` |/ _ \ '__| | |  | | | | |/ _` |/ _ \ '_ \ 
+    | | (_| | | |  __/ | | |  __/ (_| |  __/ |    | |__| | |_| | (_| |  __/ | | |
+    |_|\__,_|_|  \___|_|_|  \___|\__,_|\___|_|     \___|_|\__,_|\__,_|\___|_| |_|
+    
+              Instalador de Easypanel (Contabo) por Francisco Rozas Mira
+                                  (c) 2025 - MIT License
 EOF
 
 echo
-echo "Este script actualizará el sistema, instalará Docker, Easypanel,"
-echo "net-tools y configurará un firewall. Además, si tienes un dominio"
-echo "apuntando a esta IP, usará Let’s Encrypt automáticamente."
-echo "Presiona CTRL+C para cancelar si no deseas continuar."
-sleep 5
+echo_info "Este script seguirá exactamente estos pasos, en el orden indicado:"
+echo " 1) apt update && apt upgrade -y"
+echo " 2) Instalar Docker (curl -sSL https://get.docker.com | sh)"
+echo " 3) Instalar Easypanel (docker run --rm -it...)"
+echo " 4) apt install net-tools"
+echo " 5) netstat -tuln | grep -E \"80|443\""
+echo " 6) Detener el servicio que use 80/443 (ej: Apache)"
+echo " 7) Configurar firewall (ufw allow ssh,80,443 y enable)"
+echo " 8) Mensaje final"
+echo
+echo "Pulsa [ENTER] para continuar o CTRL+C para cancelar."
+read -r
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 1. ACTUALIZA EL SISTEMA (APT UPDATE & UPGRADE)
+# 1) ACTUALIZA EL SISTEMA
 # ──────────────────────────────────────────────────────────────────────────────
-echo_info "Actualizando repositorios y paquetes del sistema..."
+clear
+cat << "STEP"
+███████╗████████╗██████╗ 
+██╔════╝╚══██╔══╝██╔══██╗
+█████╗     ██║   ██████╔╝
+██╔══╝     ██║   ██╔══██╗
+███████╗   ██║   ██║  ██║
+╚══════╝   ╚═╝   ╚═╝  ╚═╝
+STEP
+echo_info "1) Actualizando el sistema operativo..."
+sleep 1
 apt update && apt upgrade -y
 echo_ok "Sistema actualizado."
+sleep 1
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 2. INSTALA DOCKER (get.docker.com)
+# 2) INSTALAR DOCKER
 # ──────────────────────────────────────────────────────────────────────────────
-echo_info "Instalando Docker..."
+clear
+cat << "STEP"
+██████╗  ██████╗  ██████╗██╗  ██╗███████╗██████╗ 
+██╔══██╗██╔═══██╗██╔════╝██║  ██║██╔════╝██╔══██╗
+██████╔╝██║   ██║██║     ███████║█████╗  ██████╔╝
+██╔══██╗██║   ██║██║     ██╔══██║██╔══╝  ██╔══██╗
+██████╔╝╚██████╔╝╚██████╗██║  ██║███████╗██║  ██║
+╚═════╝  ╚═════╝  ╚═════╝╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝
+STEP
+echo_info "2) Instalando Docker (curl -sSL https://get.docker.com | sh)..."
+sleep 1
 curl -sSL https://get.docker.com | sh
 echo_ok "Docker instalado correctamente."
-
-# ──────────────────────────────────────────────────────────────────────────────
-# 3. PREGUNTA SI USAR LET’S ENCRYPT (DOMINIO)
-# ──────────────────────────────────────────────────────────────────────────────
-USE_LETSENCRYPT="n"
-EASYPANEL_DOMAIN=""
-EASYPANEL_EMAIL=""
-
-echo_info "¿Quieres configurar Easypanel con Let’s Encrypt para HTTPS? (S/n)"
-read -p "   " USE_LETSENCRYPT
-
-if [[ "$USE_LETSENCRYPT" =~ ^[Ss]$ ]]; then
-  echo_info "Introduce el nombre de dominio (ej: panel.midominio.com):"
-  read EASYPANEL_DOMAIN
-  if [ -z "$EASYPANEL_DOMAIN" ]; then
-    echo_warn "No se ha introducido dominio. Se usará un certificado auto-firmado."
-  else
-    echo_info "Introduce un correo electrónico para Let’s Encrypt:"
-    read EASYPANEL_EMAIL
-    if [ -z "$EASYPANEL_EMAIL" ]; then
-      echo_warn "No se especificó email. Let’s Encrypt puede requerirlo."
-      EASYPANEL_EMAIL="admin@$EASYPANEL_DOMAIN"
-    fi
-  fi
-fi
-
-# ──────────────────────────────────────────────────────────────────────────────
-# 4. INSTALA EASYPANEL (SETUP) CON LAS VARIABLES DE ENTORNO
-# ──────────────────────────────────────────────────────────────────────────────
-echo_info "Instalando Easypanel (modo setup)..."
-
-EXISTING=$(docker ps -q -f name=easypanel)
-if [ "$EXISTING" ]; then
-  echo_warn "Se encontró un contenedor Easypanel en ejecución. Deteniéndolo..."
-  docker stop easypanel
-  docker rm easypanel
-fi
-
-PORTS="-p 80:80 -p 443:443"
-
-if [ -n "$EASYPANEL_DOMAIN" ]; then
-   docker run --rm -it \
-     $PORTS \
-     -v /etc/easypanel:/etc/easypanel \
-     -v /var/run/docker.sock:/var/run/docker.sock:ro \
-     -e EASYPANEL_DOMAIN="$EASYPANEL_DOMAIN" \
-     -e EASYPANEL_LETSENCRYPT_EMAIL="$EASYPANEL_EMAIL" \
-     easypanel/easypanel setup
-else
-   docker run --rm -it \
-     $PORTS \
-     -v /etc/easypanel:/etc/easypanel \
-     -v /var/run/docker.sock:/var/run/docker.sock:ro \
-     easypanel/easypanel setup
-fi
-
-echo_ok "Easypanel configurado."
-
-# ──────────────────────────────────────────────────────────────────────────────
-# 5. AÑADIR NET-TOOLS
-# ──────────────────────────────────────────────────────────────────────────────
-echo_info "Instalando net-tools (para netstat, etc.)..."
-apt install net-tools -y
-echo_ok "net-tools instalado."
-
-# ──────────────────────────────────────────────────────────────────────────────
-# 6. VERIFICA PUERTOS 80/443 Y DETIENE APACHE (SI EXISTE)
-# ──────────────────────────────────────────────────────────────────────────────
-echo_info "Verificando puertos 80 y 443..."
 sleep 1
-PORTS_IN_USE=$(netstat -tuln | grep -E "0.0.0.0:(80|443)|:::(80|443)")
-
-if [ -n "$PORTS_IN_USE" ]; then
-  echo_warn "Se encontraron servicios usando puertos 80/443:"
-  echo "$PORTS_IN_USE"
-  echo
-  echo_warn "Intentando detener apache2 (si está en ejecución)..."
-  systemctl stop apache2 2>/dev/null
-  systemctl disable apache2 2>/dev/null
-  echo_ok "Apache (si existía) se detuvo y deshabilitó."
-else
-  echo_ok "Los puertos 80 y 443 están libres."
-fi
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 7. CONFIGURA FIREWALL (UFW) PARA PUERTOS 80/443/SSH
+# 3) INSTALAR EASY PANEL
 # ──────────────────────────────────────────────────────────────────────────────
-echo_info "Configurando firewall UFW..."
-which ufw &>/dev/null || apt install ufw -y
+clear
+cat << "STEP"
+███████╗ █████╗ ███████╗██╗   ██╗██████╗  ███████╗███╗   ██╗███████╗
+██╔════╝██╔══██╗██╔════╝██║   ██║██╔══██╗██╔════╝████╗  ██║██╔════╝
+█████╗  ███████║█████╗  ██║   ██║██████╔╝█████╗  ██╔██╗ ██║███████╗
+██╔══╝  ██╔══██║██╔══╝  ██║   ██║██╔══██╗██╔══╝  ██║╚██╗██║╚════██║
+██║     ██║  ██║███████╗╚██████╔╝██║  ██║███████╗██║ ╚████║███████║
+╚═╝     ╚═╝  ╚═╝╚══════╝ ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═╝  ╚═══╝╚══════╝
+STEP
+echo_info "3) Instalando Easypanel (docker run --rm -it...)"
+sleep 1
+docker run --rm -it \
+  -v /etc/easypanel:/etc/easypanel \
+  -v /var/run/docker.sock:/var/run/docker.sock:ro \
+  easypanel/easypanel setup
+echo_ok "Easypanel instalado y configurado."
+sleep 1
 
+# ──────────────────────────────────────────────────────────────────────────────
+# 4) INSTALAR net-tools
+# ──────────────────────────────────────────────────────────────────────────────
+clear
+cat << "STEP"
+███╗   ██╗███████╗████████╗     ████████╗ ██████╗  ██████╗ ██╗     ███████╗
+████╗  ██║██╔════╝╚══██╔══╝     ╚══██╔══╝██╔═══██╗██╔═══██╗██║     ██╔════╝
+██╔██╗ ██║█████╗     ██║          ██║   ██║   ██║██║   ██║██║     ███████╗
+██║╚██╗██║██╔══╝     ██║          ██║   ██║   ██║██║   ██║██║     ╚════██║
+██║ ╚████║███████╗   ██║          ██║   ╚██████╔╝╚██████╔╝███████╗███████║
+╚═╝  ╚═══╝╚══════╝   ╚═╝          ╚═╝    ╚═════╝  ╚═════╝ ╚══════╝╚══════╝
+STEP
+echo_info "4) Instalando net-tools..."
+sleep 1
+apt install -y net-tools
+echo_ok "net-tools instalado."
+sleep 1
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 5) VERIFICAR PUERTOS 80 Y 443
+# ──────────────────────────────────────────────────────────────────────────────
+clear
+cat << "STEP"
+██████╗ ███████╗██████╗ ██╗██████╗ 
+██╔══██╗██╔════╝██╔══██╗██║██╔══██╗
+██████╔╝█████╗  ██║  ██║██║██║  ██║
+██╔══██╗██╔══╝  ██║  ██║██║██║  ██║
+██║  ██║███████╗██████╔╝██║██████╔╝
+╚═╝  ╚═╝╚══════╝╚═════╝ ╚═╝╚═════╝ 
+STEP
+echo_info "5) Revisando si los puertos 80 y 443 están en uso..."
+sleep 1
+netstat -tuln | grep -E "80|443" || echo "No se encontraron procesos en 80/443."
+sleep 2
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 6) DETIENE SERVICIO QUE OCUPA 80/443 (ej: Apache)
+# ──────────────────────────────────────────────────────────────────────────────
+clear
+cat << "STEP"
+██████╗ ███████╗████████╗██╗██████╗ ███████╗
+██╔══██╗██╔════╝╚══██╔══╝██║██╔══██╗██╔════╝
+██████╔╝█████╗     ██║   ██║██████╔╝█████╗  
+██╔══██╗██╔══╝     ██║   ██║██╔═══╝ ██╔══╝  
+██║  ██║███████╗   ██║   ██║██║     ███████╗
+╚═╝  ╚═╝╚══════╝   ╚═╝   ╚═╝╚═╝     ╚══════╝
+STEP
+echo_info "6) Deteniendo Apache2 (si está activo) y deshabilitándolo..."
+sleep 1
+systemctl stop apache2 2>/dev/null
+systemctl disable apache2 2>/dev/null
+echo_ok "Apache detenido/deshabilitado (si existía)."
+sleep 1
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 7) CONFIGURA FIREWALL (UFW)
+# ──────────────────────────────────────────────────────────────────────────────
+clear
+cat << "STEP"
+██╗   ██╗███████╗
+██║   ██║██╔════╝
+██║   ██║█████╗  
+██║   ██║██╔══╝  
+╚██████╔╝███████╗
+ ╚═════╝ ╚══════╝
+STEP
+echo_info "7) Configurando firewall UFW (permitir SSH, 80 y 443)..."
+sleep 1
+apt-get install -y ufw >/dev/null 2>&1
 ufw allow ssh
 ufw allow 80
 ufw allow 443
-
-if [[ "$(ufw status)" == *"Status: inactive"* ]]; then
-  echo_info "Habilitando UFW..."
-  ufw --force enable
-  echo_ok "UFW habilitado."
-fi
+ufw --force enable
+echo_ok "Firewall activo con puertos 22(SSH), 80 y 443 abiertos."
+sleep 1
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 8. MENSAJE FINAL DE ACCESO
+# 8) MENSAJE FINAL
 # ──────────────────────────────────────────────────────────────────────────────
 clear
-cat <<EOF
-
-${VERDE}==========================================================
-¡Instalación completada con éxito!
-==========================================================${RESET}
-
-- Docker está instalado y en ejecución.
-- Easypanel se ha configurado.
-
-EOF
-
-if [ -n "$EASYPANEL_DOMAIN" ]; then
-  echo "Se ha configurado Easypanel con dominio: ${AMARILLO}$EASYPANEL_DOMAIN${RESET}"
-  echo "Si Let’s Encrypt ha validado tu dominio, el certificado SSL"
-  echo "estará activo. De lo contrario, revisa logs y configuración DNS."
-  echo -e "Accede via HTTPS: ${AMARILLO}https://$EASYPANEL_DOMAIN${RESET}\n"
-else
-  echo "No se configuró un dominio, se ha generado un certificado auto-firmado."
-  echo "Podrás acceder a Easypanel en: https://<IP-del-servidor>"
-  echo "El navegador mostrará una advertencia de certificado inseguro."
-  echo
-fi
-
-echo "- net-tools instalado (para netstat, etc.)."
-echo "- Firewall UFW activo, puertos 22 (SSH), 80 y 443 abiertos."
+echo -e "${VERDE}===========================================================${RESET}"
+echo -e "   PROCESO DE INSTALACIÓN FINALIZADO CON ÉXITO"
+echo -e "${VERDE}===========================================================${RESET}"
 echo
-
-echo_ok "¡Proceso finalizado! Disfruta de Easypanel."
-exit 0
+echo -e "${BLANCO}- Docker está instalado correctamente.${RESET}"
+echo -e "${BLANCO}- Easypanel se ha configurado en tu servidor.${RESET}"
+echo -e "${BLANCO}- net-tools instalado y puertos 80 y 443 disponibles.${RESET}"
+echo -e "${BLANCO}- Firewall UFW activo (SSH, 80, 443 abiertos).${RESET}"
+echo
+echo -e "${AMARILLO}Accede a Easypanel abriendo tu navegador en:${RESET}"
+echo -e "  ${CYAN}https://<IP-de-tu-servidor>${RESET} (o el dominio que hayas configurado)"
+echo
+echo -e "${VERDE}[OK]${RESET} ¡Disfruta de Easypanel!"
+echo
