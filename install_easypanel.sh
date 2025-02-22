@@ -1,20 +1,18 @@
 #!/bin/bash
 ################################################################################
-#  Script de instalación/rehabilitación de Easypanel para Contabo              #
+#  Script de instalación/rehabilitación de Docker + Easypanel (Contabo)         #
+#  con opción de dominio personalizado y Let’s Encrypt                          #
 #  (c) 2025 - Francisco Rozas Mira - MIT License                               #
 #                                                                              #
-#  Proceso exacto con la opción adicional de dominio personalizado:            #
-#    1) Verifica si Docker/Easypanel están instalados, pregunta si limpiar.    #
-#    2) Si el usuario acepta, desinstala Docker/Easypanel por completo.        #
-#    3) apt update && apt upgrade -y                                           #
-#    4) Instala Docker (curl -sSL https://get.docker.com | sh)                 #
-#    5) Pregunta si se desea configurar un dominio personalizado para Easypanel#
-#    6) Instala Easypanel (docker run ... ) pasando la variable de dominio.    #
-#    7) apt install net-tools                                                  #
-#    8) netstat -tuln | grep -E "80|443"                                       #
-#    9) systemctl stop apache2 && disable apache2                              #
-#    10) ufw allow ssh, 80, 443, enable                                        #
-#    11) Mensaje final con link (IP o dominio).                                #
+#  Pasos en orden:                                                              #
+#   1) Detecta si Docker/Easypanel están instalados, pregunta si borrarlos.     #
+#   2) Limpia Docker/Easypanel si el usuario acepta (borrando contenedor, etc.).#
+#   3) apt update && apt upgrade -y                                             #
+#   4) Instala Docker                                                           #
+#   5) Pregunta dominio (opcional) y si usar Let’s Encrypt (correo).           #
+#   6) Inicia Easypanel con docker run -d (-p 80:80 -p 443:443) y variables env.#
+#   7) Instala net-tools, netstat puertos 80/443, detiene apache, UFW.          #
+#   8) Muestra link final (dominio o IP).                                       #
 ################################################################################
 
 : '
@@ -77,18 +75,17 @@ cat << "EOF"
     | | (_| | | |  __/ (_|  __/ | \ \ (_| | | | | | |_|
     |_|\__,_|_|  \___|\___\___|_|  \_\__,_|_| |_| |_(_)
 
- Instalación / reinstalación de Docker + Easypanel (Contabo)
- Con opción de dominio personalizado
+ Instalación / Reinstalación de Docker + Easypanel (Contabo)
+ con dominio personalizado y Let’s Encrypt opcional
  (c) 2025 - Francisco Rozas Mira | MIT License
 EOF
 
 echo
-echo_info "Este script va a:"
-echo " 1) Comprobar si Docker/Easypanel ya están instalados."
-echo " 2) Preguntar si quieres borrarlos y reinstalar de cero (opcional)."
-echo " 3) Instalar todo en estricto orden (apt update, Docker, Easypanel, net-tools, etc.)."
-echo " 4) Preguntar si deseas un dominio personalizado para Easypanel."
-echo " 5) Mostrar al final un link directo al panel (IP pública o dominio)."
+echo_info "Este script:"
+echo " 1) Comprueba si Docker/Easypanel están instalados y pregunta si limpiarlos."
+echo " 2) Instala (o reinstala) Docker, Easypanel, net-tools, etc., en estricto orden."
+echo " 3) Te permite establecer un dominio personalizado (y Let’s Encrypt)."
+echo " 4) Al final muestra el enlace de acceso (dominio o IP)."
 echo
 echo "Pulsa [ENTER] para continuar o CTRL+C para cancelar."
 read -r
@@ -118,7 +115,7 @@ fi
 HACER_LIMPIEZA="no"
 if [ "$INSTALADO_DOCKER" = "si" ] || [ "$INSTALADO_EASYPANEL" = "si" ]; then
   echo_warn "Se detecta Docker/Easypanel instalados en este servidor."
-  echo -n "¿Quieres DESINSTALAR Docker/Easypanel para tener instalación limpia? (s/n): "
+  echo -n "¿Quieres DESINSTALAR Docker/Easypanel para instalación limpia? (s/n): "
   read -r RESP
   RESP=$(echo "$RESP" | tr '[:upper:]' '[:lower:]')
   if [[ "$RESP" == "s" || "$RESP" == "si" ]]; then
@@ -150,15 +147,15 @@ if [ "$HACER_LIMPIEZA" = "si" ]; then
 fi
 
 # ──────────────────────────────────────────────────────────────────────────────
-#      1) apt update && apt upgrade -y
+#    1) apt update && apt upgrade -y
 # ──────────────────────────────────────────────────────────────────────────────
 clear
-echo_info "1) Actualizando el sistema operativo..."
+echo_info "1) Actualizando el sistema operativo (apt update && apt upgrade -y)..."
 apt update && apt upgrade -y
 echo_ok "Sistema actualizado."
 
 # ──────────────────────────────────────────────────────────────────────────────
-#      2) Instala Docker
+#    2) Instalar Docker
 # ──────────────────────────────────────────────────────────────────────────────
 clear
 echo_info "2) Instalando Docker (curl -sSL https://get.docker.com | sh)..."
@@ -166,61 +163,84 @@ curl -sSL https://get.docker.com | sh
 echo_ok "Docker instalado correctamente."
 
 # ──────────────────────────────────────────────────────────────────────────────
-#      2.1) Pregunta dominio personalizado
+#    2.1) Preguntar dominio personalizado y Let’s Encrypt
 # ──────────────────────────────────────────────────────────────────────────────
 clear
 echo_info "¿Deseas configurar un dominio personalizado para Easypanel? (s/n)"
 read -r DOM_RESP
 DOM_RESP=$(echo "$DOM_RESP" | tr '[:upper:]' '[:lower:]')
 EASYPANEL_DOMAIN=""
+EASYPANEL_LETSENCRYPT_EMAIL=""
+
 if [[ "$DOM_RESP" == "s" || "$DOM_RESP" == "si" ]]; then
   echo_info "Introduce el dominio (ej: panel.midominio.com):"
   read -r EASYPANEL_DOMAIN
-  if [ -z "$EASYPANEL_DOMAIN" ]; then
-    echo_warn "No se introdujo dominio. Se usará IP por defecto."
+  if [ -n "$EASYPANEL_DOMAIN" ]; then
+    echo_info "¿Deseas usar Let’s Encrypt para HTTPS válido en tu dominio? (s/n)"
+    read -r LE_RESP
+    LE_RESP=$(echo "$LE_RESP" | tr '[:upper:]' '[:lower:]')
+    if [[ "$LE_RESP" == "s" || "$LE_RESP" == "si" ]]; then
+      echo_info "Introduce tu correo electrónico para Let’s Encrypt:"
+      read -r EASYPANEL_LETSENCRYPT_EMAIL
+    else
+      echo_warn "Se usará certificado auto-firmado con dominio $EASYPANEL_DOMAIN."
+    fi
+  else
+    echo_warn "No se introdujo dominio. Se usará la IP del servidor."
     EASYPANEL_DOMAIN=""
   fi
 else
-  echo_info "Se usará la IP del servidor por defecto."
+  echo_info "Se usará la IP del servidor para acceder a Easypanel."
 fi
 
 # ──────────────────────────────────────────────────────────────────────────────
-#      3) Instala Easypanel (docker run)
+#    3) Instala Easypanel (docker run -d)
 # ──────────────────────────────────────────────────────────────────────────────
 clear
-echo_info "3) Instalando Easypanel..."
+echo_info "3) Iniciando contenedor de Easypanel en modo detach (-d)..."
+
+# Preparamos el comando base
+DOCKER_CMD="docker run -d \
+  -p 80:80 \
+  -p 443:443 \
+  -v /etc/easypanel:/etc/easypanel \
+  -v /var/run/docker.sock:/var/run/docker.sock:ro \
+  --name easypanel \
+  easypanel/easypanel"
+
+# Si hay dominio, le sumamos -e EASYPANEL_DOMAIN
 if [ -n "$EASYPANEL_DOMAIN" ]; then
-  docker run --rm -it \
-    -v /etc/easypanel:/etc/easypanel \
-    -v /var/run/docker.sock:/var/run/docker.sock:ro \
-    -e EASYPANEL_DOMAIN="$EASYPANEL_DOMAIN" \
-    easypanel/easypanel setup
-else
-  docker run --rm -it \
-    -v /etc/easypanel:/etc/easypanel \
-    -v /var/run/docker.sock:/var/run/docker.sock:ro \
-    easypanel/easypanel setup
+  DOCKER_CMD="$DOCKER_CMD -e EASYPANEL_DOMAIN=\"$EASYPANEL_DOMAIN\""
 fi
-echo_ok "Easypanel instalado y configurado."
+
+# Si hay email, sumamos -e EASYPANEL_LETSENCRYPT_EMAIL
+if [ -n "$EASYPANEL_LETSENCRYPT_EMAIL" ]; then
+  DOCKER_CMD="$DOCKER_CMD -e EASYPANEL_LETSENCRYPT_EMAIL=\"$EASYPANEL_LETSENCRYPT_EMAIL\""
+fi
+
+# Ejecutamos
+eval "$DOCKER_CMD"
+
+echo_ok "Easypanel se está ejecutando en segundo plano (contenedor 'easypanel')."
 
 # ──────────────────────────────────────────────────────────────────────────────
-#      4) apt install net-tools
+#    4) apt install net-tools
 # ──────────────────────────────────────────────────────────────────────────────
 clear
-echo_info "4) Instalando net-tools..."
+echo_info "4) Instalando net-tools (para netstat)..."
 apt install -y net-tools
 echo_ok "net-tools instalado."
 
 # ──────────────────────────────────────────────────────────────────────────────
-#      5) netstat -tuln | grep -E "80|443"
+#    5) netstat -tuln | grep -E "80|443"
 # ──────────────────────────────────────────────────────────────────────────────
 clear
-echo_info "5) Comprobando puertos 80 y 443..."
-netstat -tuln | grep -E "80|443" || echo_info "No se encontraron procesos en 80/443."
+echo_info "5) Verificando puertos 80/443 con netstat..."
+netstat -tuln | grep -E "80|443" || echo_info "No hay servicios en 80/443 (salvo Docker/Easypanel)."
 sleep 2
 
 # ──────────────────────────────────────────────────────────────────────────────
-#      6) Detiene Apache (si existe)
+#    6) Detiene Apache si está en uso
 # ──────────────────────────────────────────────────────────────────────────────
 clear
 echo_info "6) Deteniendo apache2 (si está activo) y deshabilitándolo..."
@@ -229,45 +249,50 @@ systemctl disable apache2 2>/dev/null
 echo_ok "Apache detenido/deshabilitado (si existía)."
 
 # ──────────────────────────────────────────────────────────────────────────────
-#      7) Configurar firewall (ufw)
+#    7) Configura firewall (UFW)
 # ──────────────────────────────────────────────────────────────────────────────
 clear
-echo_info "7) Configurando firewall UFW (SSH, 80, 443)..."
+echo_info "7) Configurando firewall UFW (permitir SSH, 80 y 443)..."
 apt install -y ufw 2>/dev/null
 ufw allow ssh
 ufw allow 80
 ufw allow 443
 ufw --force enable
-echo_ok "Firewall activo. Puertos 22, 80, 443 abiertos."
+echo_ok "UFW activo, puertos 22 (SSH), 80 y 443 abiertos."
 
 # ──────────────────────────────────────────────────────────────────────────────
-#      8) Mensaje final (con IP o dominio)
+#    8) Mensaje final: link directo (dominio o IP)
 # ──────────────────────────────────────────────────────────────────────────────
 clear
 
-# Podemos obtener la IP pública de varias formas; una es:
-PUBLIC_IP="$(curl -s ifconfig.me || echo 'tu_servidor_IP')"
+# Intentamos obtener la IP pública (puedes cambiar a "hostname -I | awk '{print $1}'")
+PUBLIC_IP="$(curl -s ifconfig.me || echo 'X.X.X.X')"
 
 echo -e "${VERDE}==============================================================${RESET}"
-echo -e "      INSTALACIÓN DE EASY PANEL COMPLETADA EXITOSAMENTE"
+echo -e " INSTALACIÓN DE EASY PANEL COMPLETADA EXITOSAMENTE"
 echo -e "${VERDE}==============================================================${RESET}"
 echo
 echo -e " - Docker instalado (o reinstalado) con éxito."
-echo -e " - Easypanel configurado en tu servidor."
-echo -e " - net-tools instalado, puertos 80/443 revisados."
+echo -e " - Easypanel en contenedor 'easypanel' (puertos 80/443)."
+echo -e " - net-tools instalado, puertos verificados."
 echo -e " - Firewall UFW activo (SSH, 80, 443)."
 echo
 
 if [ -n "$EASYPANEL_DOMAIN" ]; then
-  echo -e "${AMARILLO}Accede a Easypanel con tu dominio personalizado:${RESET}"
+  echo -e "${AMARILLO}Accede a Easypanel con tu dominio:${RESET}"
   echo -e "   ${CYAN}https://$EASYPANEL_DOMAIN${RESET}"
-  echo
+  if [ -n "$EASYPANEL_LETSENCRYPT_EMAIL" ]; then
+    echo "Easypanel intentará emitir un certificado Let’s Encrypt automáticamente."
+  else
+    echo "Usarás un certificado auto-firmado para HTTPS (advertencias en el navegador)."
+  fi
 else
-  echo -e "${AMARILLO}Accede a Easypanel con la IP de tu servidor:${RESET}"
+  echo -e "${AMARILLO}Accede a Easypanel con la IP del servidor:${RESET}"
   echo -e "   ${CYAN}https://$PUBLIC_IP${RESET}"
-  echo
+  echo "Se usará un certificado auto-firmado (si no configuraste nada adicional)."
 fi
 
-echo_ok "¡Disfruta de tu servidor, Winner!"
 echo
-exit 0
+echo_ok "¡Disfruta de tu servidor, Winner"
+echo
+exit 
